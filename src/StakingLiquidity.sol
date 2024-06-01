@@ -284,6 +284,10 @@ contract StakingLiquidity is BaseHook {
         return StakingInfos[_poolId].balanceOf[_account];
     }
 
+    function getRewardToken(PoolId _poolId) public view returns (address) {
+        return StakingInfos[_poolId].rewardToken;
+    }
+
     function _min(uint256 x, uint256 y) private pure returns (uint256) {
         return x <= y ? x : y;
     }
