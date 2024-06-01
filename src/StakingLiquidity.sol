@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {BaseHook} from "v4-periphery/BaseHook.sol";
+import "forge-std/Test.sol";
 
+import {BaseHook} from "v4-periphery/BaseHook.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolManager} from "v4-core/src/PoolManager.sol";
@@ -52,20 +53,6 @@ contract StakingLiquidity is BaseHook {
     mapping(PoolId => StakingInfo) public StakingInfos;
 
     constructor(IPoolManager _poolManager) BaseHook(_poolManager) {}
-
-    modifier updateReward(PoolId _poolId, address _account) {
-        StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
-        stakingPoolInfo.rewardPerTokenStored = rewardPerToken(_poolId);
-        stakingPoolInfo.updatedAt = lastTimeRewardApplicable(_poolId);
-
-        if (_account != address(0)) {
-            stakingPoolInfo.rewards[_account] = earned(_poolId, _account);
-            stakingPoolInfo.userRewardPerTokenPaid[_account] = stakingPoolInfo
-                .rewardPerTokenStored;
-        }
-
-        _;
-    }
 
     function getHookPermissions()
         public
@@ -124,27 +111,28 @@ contract StakingLiquidity is BaseHook {
     }
 
     function afterAddLiquidity(
-        address sender,
+        address owner,
         PoolKey calldata key,
         IPoolManager.ModifyLiquidityParams calldata liquidityParams,
         BalanceDelta delta,
-        bytes calldata
-    )
-        external
-        override
-        updateReward(key.toId(), sender)
-        returns (bytes4, BalanceDelta)
-    {
+        bytes calldata mockUser
+    ) external override returns (bytes4, BalanceDelta) {
+        address sender = abi.decode(mockUser, (address));
+        PoolId id = key.toId();
+        console.log("sender", sender);
+        _updateReward(id, sender);
         Position.Info memory positionInfo = StateLibrary.getPosition(
             poolManager,
-            key.toId(),
-            sender,
+            id,
+            owner,
             liquidityParams.tickLower,
             liquidityParams.tickUpper,
             liquidityParams.salt
         );
 
-        StakingInfo storage stakingPoolInfo = StakingInfos[key.toId()];
+        //console.log("sender %s liquidity %s", sender, positionInfo.liquidity);
+
+        StakingInfo storage stakingPoolInfo = StakingInfos[id];
         stakingPoolInfo.balanceOf[sender] += positionInfo.liquidity;
         stakingPoolInfo.totalSupply += positionInfo.liquidity;
 
@@ -152,27 +140,26 @@ contract StakingLiquidity is BaseHook {
     }
 
     function afterRemoveLiquidity(
-        address sender,
+        address owner,
         PoolKey calldata key,
         IPoolManager.ModifyLiquidityParams calldata liquidityParams,
         BalanceDelta delta,
-        bytes calldata
-    )
-        external
-        override
-        updateReward(key.toId(), sender)
-        returns (bytes4, BalanceDelta)
-    {
+        bytes calldata mockUser
+    ) external override returns (bytes4, BalanceDelta) {
+        address sender = abi.decode(mockUser, (address));
+        PoolId id = key.toId();
+        _updateReward(id, sender);
+
         Position.Info memory positionInfo = StateLibrary.getPosition(
             poolManager,
-            key.toId(),
-            sender,
+            id,
+            owner,
             liquidityParams.tickLower,
             liquidityParams.tickUpper,
             liquidityParams.salt
         );
 
-        StakingInfo storage stakingPoolInfo = StakingInfos[key.toId()];
+        StakingInfo storage stakingPoolInfo = StakingInfos[id];
         stakingPoolInfo.balanceOf[sender] -= positionInfo.liquidity;
         stakingPoolInfo.totalSupply -= positionInfo.liquidity;
 
@@ -213,9 +200,8 @@ contract StakingLiquidity is BaseHook {
             stakingPoolInfo.rewards[_account];
     }
 
-    function getReward(
-        PoolId _poolId
-    ) external updateReward(_poolId, msg.sender) {
+    function getReward(PoolId _poolId) external {
+        _updateReward(_poolId, msg.sender);
         StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
         uint256 reward = stakingPoolInfo.rewards[msg.sender];
         if (reward > 0) {
@@ -227,7 +213,30 @@ contract StakingLiquidity is BaseHook {
         }
     }
 
+    function getTotalSupply(PoolId _poolId) public view returns (uint256) {
+        return StakingInfos[_poolId].totalSupply;
+    }
+
+    function getRewards(
+        PoolId _poolId,
+        address _account
+    ) public view returns (uint256) {
+        return StakingInfos[_poolId].rewards[_account];
+    }
+
     function _min(uint256 x, uint256 y) private pure returns (uint256) {
         return x <= y ? x : y;
+    }
+
+    function _updateReward(PoolId _poolId, address _account) private {
+        StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
+        stakingPoolInfo.rewardPerTokenStored = rewardPerToken(_poolId);
+        stakingPoolInfo.updatedAt = lastTimeRewardApplicable(_poolId);
+
+        if (_account != address(0)) {
+            stakingPoolInfo.rewards[_account] = earned(_poolId, _account);
+            stakingPoolInfo.userRewardPerTokenPaid[_account] = stakingPoolInfo
+                .rewardPerTokenStored;
+        }
     }
 }

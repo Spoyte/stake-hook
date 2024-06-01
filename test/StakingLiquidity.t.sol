@@ -25,6 +25,10 @@ contract StakingLiquidityTest is Test, Deployers {
     MockERC20 rewardToken;
     uint256 amountToken = 1_000_000 * 10 ** 18;
 
+    address bob = makeAddr("bob");
+    address alice = makeAddr("alice");
+    address dylan = makeAddr("dylan");
+
     function setUp() public {
         // creates the pool manager, utility routers, and test tokens
         Deployers.deployFreshManagerAndRouters();
@@ -76,22 +80,24 @@ contract StakingLiquidityTest is Test, Deployers {
         modifyLiquidityRouter.modifyLiquidity(
             key,
             IPoolManager.ModifyLiquidityParams(-60, 60, 10 ether, 0),
-            ZERO_BYTES
+            abi.encode(bob)
         );
+
         modifyLiquidityRouter.modifyLiquidity(
             key,
             IPoolManager.ModifyLiquidityParams(-120, 120, 10 ether, 0),
-            ZERO_BYTES
+            abi.encode(alice)
         );
+
         modifyLiquidityRouter.modifyLiquidity(
             key,
             IPoolManager.ModifyLiquidityParams(
                 TickMath.minUsableTick(60),
                 TickMath.maxUsableTick(60),
-                10 ether,
+                3 ether,
                 0
             ),
-            ZERO_BYTES
+            abi.encode(dylan)
         );
     }
 
@@ -112,10 +118,23 @@ contract StakingLiquidityTest is Test, Deployers {
         uint256 amount = stakingHook.earned(poolId, address(this));
         assertEq(amount, uint256(0));
 
-        vm.warp(31 days);
+        vm.warp(block.timestamp + 60 days);
 
-        // after 30 days the user will get all the rewards
-        amount = stakingHook.earned(poolId, address(this));
+        // after 31 days the user will get all the rewards
+        amount = stakingHook.earned(poolId, bob);
         console.log("amount", amount);
+
+        uint256 infos = stakingHook.getTotalSupply(poolId);
+
+        console.log("totalSupply", infos);
+
+        uint256 rewards = stakingHook.getRewards(
+            poolId,
+            bob
+        );
+
+        console.log("rewards", rewards);
+
+        console.log("bob", bob);
     }
 }
