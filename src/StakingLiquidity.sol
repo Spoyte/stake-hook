@@ -47,7 +47,6 @@ contract StakingLiquidity is BaseHook {
         uint256 totalSupply;
         // User address => staked amount
         mapping(address => uint256) balanceOf;
-        bool init;
     }
 
     mapping(PoolId => StakingInfo) public StakingInfos;
@@ -68,26 +67,6 @@ contract StakingLiquidity is BaseHook {
         _;
     }
 
-    function initialize(
-        PoolId _poolId,
-        address _rewardToken,
-        uint256 _amount,
-        uint32 _duration
-    ) external {
-        StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
-        require(!stakingPoolInfo.init, "already inited");
-        stakingPoolInfo.init = true;
-        IERC20Minimal(_rewardToken).transferFrom(
-            msg.sender,
-            address(this),
-            _amount
-        );
-        stakingPoolInfo.rewardToken = _rewardToken;
-        stakingPoolInfo.duration = _duration;
-        stakingPoolInfo.finishAt = block.timestamp + _duration;
-        stakingPoolInfo.rewardRate = _amount / _duration;
-    }
-
     function getHookPermissions()
         public
         pure
@@ -97,7 +76,7 @@ contract StakingLiquidity is BaseHook {
         return
             Hooks.Permissions({
                 beforeInitialize: false,
-                afterInitialize: false,
+                afterInitialize: true,
                 beforeAddLiquidity: false,
                 afterAddLiquidity: true,
                 beforeRemoveLiquidity: false,
@@ -116,6 +95,31 @@ contract StakingLiquidity is BaseHook {
     // -----------------------------------------------
     // NOTE: see IHooks.sol for function documentation
     // -----------------------------------------------
+
+    function afterInitialize(
+        address sender,
+        PoolKey calldata key,
+        uint160,
+        int24,
+        bytes calldata data
+    ) external override returns (bytes4) {
+        (address _rewardToken, uint256 _amount, uint32 _duration) = abi.decode(
+            data,
+            (address, uint256, uint32)
+        );
+        StakingInfo storage stakingPoolInfo = StakingInfos[key.toId()];
+        IERC20Minimal(_rewardToken).transferFrom(
+            sender,
+            address(this),
+            _amount
+        );
+        stakingPoolInfo.rewardToken = _rewardToken;
+        stakingPoolInfo.duration = _duration;
+        stakingPoolInfo.finishAt = block.timestamp + _duration;
+        stakingPoolInfo.rewardRate = _amount / _duration;
+
+        return BaseHook.afterInitialize.selector;
+    }
 
     function afterAddLiquidity(
         address sender,
@@ -139,7 +143,7 @@ contract StakingLiquidity is BaseHook {
         );
 
         StakingInfo storage stakingPoolInfo = StakingInfos[key.toId()];
-        stakingPoolInfo.balanceOf[msg.sender] += positionInfo.liquidity;
+        stakingPoolInfo.balanceOf[sender] += positionInfo.liquidity;
         stakingPoolInfo.totalSupply += positionInfo.liquidity;
 
         return (BaseHook.afterAddLiquidity.selector, delta);
@@ -167,7 +171,7 @@ contract StakingLiquidity is BaseHook {
         );
 
         StakingInfo storage stakingPoolInfo = StakingInfos[key.toId()];
-        stakingPoolInfo.balanceOf[msg.sender] -= positionInfo.liquidity;
+        stakingPoolInfo.balanceOf[sender] -= positionInfo.liquidity;
         stakingPoolInfo.totalSupply -= positionInfo.liquidity;
 
         return (BaseHook.afterRemoveLiquidity.selector, delta);
