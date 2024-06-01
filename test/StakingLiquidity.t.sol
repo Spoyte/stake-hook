@@ -101,7 +101,7 @@ contract StakingLiquidityTest is Test, Deployers {
         );
     }
 
-    function testLiquidityHooks() public {
+    function testLiquidityHooksEarn() public {
         // Perform a test swap //
         bool zeroForOne = true;
         int256 amountSpecified = -1e18; // negative number indicates exact input swap!
@@ -116,25 +116,12 @@ contract StakingLiquidityTest is Test, Deployers {
         assertEq(int256(swapDelta.amount0()), amountSpecified);
 
         uint256 amount = stakingHook.earned(poolId, address(this));
-        assertEq(amount, uint256(0));
+        assertEq(amount, 0);
 
-        vm.warp(block.timestamp + 60 days);
+        vm.warp(block.timestamp + 1 days);
 
-        // after 31 days the user will get all the rewards
+        // after 1 days the user will get some rewards
         amount = stakingHook.earned(poolId, bob);
-        console.log("amount", amount);
-
-        uint256 infos = stakingHook.getTotalSupply(poolId);
-
-        console.log("totalSupply", infos);
-
-        uint256 rewards = stakingHook.getRewards(
-            poolId,
-            bob
-        );
-
-        console.log("rewards", rewards);
-
-        console.log("bob", bob);
+        assertGt(amount, 0);
     }
 }
