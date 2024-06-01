@@ -119,7 +119,7 @@ contract StakingLiquidity is BaseHook {
     ) external override returns (bytes4, BalanceDelta) {
         address sender = abi.decode(mockUser, (address));
         PoolId id = key.toId();
-        console.log("sender", sender);
+
         _updateReward(id, sender);
         Position.Info memory positionInfo = StateLibrary.getPosition(
             poolManager,
@@ -130,11 +130,15 @@ contract StakingLiquidity is BaseHook {
             liquidityParams.salt
         );
 
-        //console.log("sender %s liquidity %s", sender, positionInfo.liquidity);
-
         StakingInfo storage stakingPoolInfo = StakingInfos[id];
         stakingPoolInfo.balanceOf[sender] += positionInfo.liquidity;
         stakingPoolInfo.totalSupply += positionInfo.liquidity;
+
+        console.log(
+            "add liquidity sender %s liquidity %s",
+            sender,
+            positionInfo.liquidity
+        );
 
         return (BaseHook.afterAddLiquidity.selector, delta);
     }
@@ -162,6 +166,12 @@ contract StakingLiquidity is BaseHook {
         StakingInfo storage stakingPoolInfo = StakingInfos[id];
         stakingPoolInfo.balanceOf[sender] -= positionInfo.liquidity;
         stakingPoolInfo.totalSupply -= positionInfo.liquidity;
+
+        console.log(
+            "remove liquidity sender %s liquidity %s",
+            sender,
+            positionInfo.liquidity
+        );
 
         return (BaseHook.afterRemoveLiquidity.selector, delta);
     }
@@ -215,6 +225,13 @@ contract StakingLiquidity is BaseHook {
 
     function getTotalSupply(PoolId _poolId) public view returns (uint256) {
         return StakingInfos[_poolId].totalSupply;
+    }
+
+    function getLiquidity(
+        PoolId _poolId,
+        address _account
+    ) public view returns (uint256) {
+        return StakingInfos[_poolId].balanceOf[_account];
     }
 
     function _min(uint256 x, uint256 y) private pure returns (uint256) {

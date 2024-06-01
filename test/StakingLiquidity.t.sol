@@ -124,4 +124,28 @@ contract StakingLiquidityTest is Test, Deployers {
         amount = stakingHook.earned(poolId, bob);
         assertGt(amount, 0);
     }
+
+    function testUserRemoveLiquidity() public {
+        uint256 amount = stakingHook.earned(poolId, address(this));
+        assertEq(amount, 0);
+
+        vm.warp(block.timestamp + 1 days);
+
+        // after 1 days the user will get some rewards
+        amount = stakingHook.earned(poolId, bob);
+        assertGt(amount, 0);
+
+        uint256 liquidity = stakingHook.getLiquidity(poolId, alice);
+        assertGt(liquidity, 0);
+
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams(-120, 120, -1 ether, 0),
+            abi.encode(alice)
+        );
+
+        uint256 newliquidity = stakingHook.getLiquidity(poolId, alice);
+        assertLt(newliquidity, liquidity);
+        console.log("lq %s new lq %s", liquidity, newliquidity);
+    }
 }
