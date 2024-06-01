@@ -64,9 +64,9 @@ contract StakingLiquidity is BaseHook {
             Hooks.Permissions({
                 beforeInitialize: false,
                 afterInitialize: true,
-                beforeAddLiquidity: false,
+                beforeAddLiquidity: true,
                 afterAddLiquidity: true,
-                beforeRemoveLiquidity: false,
+                beforeRemoveLiquidity: true,
                 afterRemoveLiquidity: true,
                 beforeSwap: false,
                 afterSwap: false,
@@ -110,6 +110,48 @@ contract StakingLiquidity is BaseHook {
         return BaseHook.afterInitialize.selector;
     }
 
+    uint256 beforeLiquidity = 0;
+
+    function beforeAddLiquidity(
+        address owner,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata liquidityParams,
+        bytes calldata mockUser
+    ) external override returns (bytes4) {
+        address sender = abi.decode(mockUser, (address));
+        PoolId id = key.toId();
+        Position.Info memory positionInfo = StateLibrary.getPosition(
+            poolManager,
+            id,
+            owner,
+            liquidityParams.tickLower,
+            liquidityParams.tickUpper,
+            liquidityParams.salt
+        );
+        beforeLiquidity = positionInfo.liquidity;
+        return BaseHook.beforeAddLiquidity.selector;
+    }
+
+    function beforeRemoveLiquidity(
+        address owner,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata liquidityParams,
+        bytes calldata mockUser
+    ) external override returns (bytes4) {
+        address sender = abi.decode(mockUser, (address));
+        PoolId id = key.toId();
+        Position.Info memory positionInfo = StateLibrary.getPosition(
+            poolManager,
+            id,
+            owner,
+            liquidityParams.tickLower,
+            liquidityParams.tickUpper,
+            liquidityParams.salt
+        );
+        beforeLiquidity = positionInfo.liquidity;
+        return BaseHook.beforeRemoveLiquidity.selector;
+    }
+
     function afterAddLiquidity(
         address owner,
         PoolKey calldata key,
@@ -130,15 +172,19 @@ contract StakingLiquidity is BaseHook {
             liquidityParams.salt
         );
 
+        uint256 liquidityAdded = positionInfo.liquidity - beforeLiquidity;
+
         StakingInfo storage stakingPoolInfo = StakingInfos[id];
-        stakingPoolInfo.balanceOf[sender] += positionInfo.liquidity;
-        stakingPoolInfo.totalSupply += positionInfo.liquidity;
+        stakingPoolInfo.balanceOf[sender] += liquidityAdded;
+        stakingPoolInfo.totalSupply += liquidityAdded;
 
         console.log(
             "add liquidity sender %s liquidity %s",
             sender,
-            positionInfo.liquidity
+            liquidityAdded
         );
+
+        beforeLiquidity = 0;
 
         return (BaseHook.afterAddLiquidity.selector, delta);
     }
@@ -163,15 +209,19 @@ contract StakingLiquidity is BaseHook {
             liquidityParams.salt
         );
 
+        uint256 liquidityRemoved = beforeLiquidity - positionInfo.liquidity;
+
         StakingInfo storage stakingPoolInfo = StakingInfos[id];
-        stakingPoolInfo.balanceOf[sender] -= positionInfo.liquidity;
-        stakingPoolInfo.totalSupply -= positionInfo.liquidity;
+        stakingPoolInfo.balanceOf[sender] -= liquidityRemoved;
+        stakingPoolInfo.totalSupply -= liquidityRemoved;
 
         console.log(
             "remove liquidity sender %s liquidity %s",
             sender,
-            positionInfo.liquidity
+            liquidityRemoved
         );
+
+        beforeLiquidity = 0;
 
         return (BaseHook.afterRemoveLiquidity.selector, delta);
     }

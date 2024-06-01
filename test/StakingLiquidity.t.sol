@@ -38,7 +38,9 @@ contract StakingLiquidityTest is Test, Deployers {
         uint160 flags = uint160(
             Hooks.AFTER_INITIALIZE_FLAG |
                 Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-                Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
+                Hooks.AFTER_REMOVE_LIQUIDITY_FLAG|
+                Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
+                Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
         );
         (address hookAddress, bytes32 salt) = HookMiner.find(
             address(this),
