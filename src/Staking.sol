@@ -82,6 +82,15 @@ contract Staking is BaseHook {
         BalanceDelta,
         bytes calldata
     ) external override returns (bytes4, int128) {
+        uint32 timeDuration = uint32(block.timestamp) - lastTimestamp;
+        if (timeDuration > timeBetweenRewards) {
+            lastTimestamp = uint32(block.timestamp);
+            uint256 tokenAmount = (timeDuration * totalToken) / rewardTime;
+            uint256 tokenAmount1 = tokenAmount / 2;
+            uint256 tokenAmount2 = tokenAmount - tokenAmount1;
+            feeGrowth0[key.toId()] += tokenAmount1;
+            feeGrowth1[key.toId()] += tokenAmount2;
+        }
         return (BaseHook.afterSwap.selector, 0);
     }
 
