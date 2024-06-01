@@ -107,6 +107,8 @@ contract StakingLiquidity is BaseHook {
             data,
             (address, uint256, uint32)
         );
+        require(_rewardToken != address(0), "No reward token defined");
+        require(_amount > 0, "No reward token amount defined");
         StakingInfo storage stakingPoolInfo = StakingInfos[key.toId()];
         IERC20Minimal(_rewardToken).transferFrom(
             sender,
