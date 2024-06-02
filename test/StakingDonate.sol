@@ -14,15 +14,21 @@ import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {Deployers} from "v4-core/test/utils/Deployers.sol";
 import {StakingDonate} from "../src/StakingDonate.sol";
 import {HookMiner} from "./utils/HookMiner.sol";
+import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 contract StakingDonateTest is Test, Deployers {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
-    StakingDonate stakingDonate;
+    StakingDonate stakingHook;
     PoolId poolId;
     // MockERC20 rewardToken;
-    // uint256 amountToken = 1_000_000 * 10 ** 18;
+    uint256 amountToken = 1_000_000 * 10 ** 18;
+
+    address bob = makeAddr("bob");
+    address alice = makeAddr("alice");
+    address dylan = makeAddr("dylan");
 
     function setUp() public {
         // creates the pool manager, utility routers, and test tokens
@@ -31,63 +37,92 @@ contract StakingDonateTest is Test, Deployers {
 
         // Deploy the hook to an address with the correct flags
         uint160 flags = uint160(
-            Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
-                | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
+            Hooks.AFTER_INITIALIZE_FLAG |
+                Hooks.AFTER_SWAP_FLAG
         );
-        (address hookAddress, bytes32 salt) =
-            HookMiner.find(address(this), flags, type(StakingDonate).creationCode, abi.encode(address(manager)));
-        stakingDonate = new StakingDonate{salt: salt}(IPoolManager(address(manager)));
-        require(address(stakingDonate) == hookAddress, "StakingDonateTest: hook address mismatch");
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            address(this),
+            flags,
+            type(StakingDonate).creationCode,
+            abi.encode(address(manager))
+        );
+        stakingHook = new StakingDonate{salt: salt}(
+            IPoolManager(address(manager))
+        );
+        require(
+            address(stakingHook) == hookAddress,
+            "StakingDonateTest: hook address mismatch"
+        );
 
         // Create the pool
-        key = PoolKey(currency0, currency1, 3000, 60, IHooks(address(stakingDonate)));
+        key = PoolKey(
+            currency0,
+            currency1,
+            3000,
+            60,
+            IHooks(address(stakingHook))
+        );
         poolId = key.toId();
-        manager.initialize(key, SQRT_PRICE_1_1, ZERO_BYTES);
+
+        // create the reward hook and deposit it on the hook
+        address rewardToken = Currency.unwrap(currency0);
+        // rewardToken.mint(address(this), amountToken);
+        IERC20Minimal(rewardToken).approve(address(stakingHook), amountToken);
+
+        bytes memory dataInit = abi.encode(
+            address(rewardToken),
+            amountToken,
+            uint32(30 days)
+        );
+        manager.initialize(key, SQRT_PRICE_1_1, dataInit);
 
         // Provide liquidity to the pool
-        modifyLiquidityRouter.modifyLiquidity(key, IPoolManager.ModifyLiquidityParams(-60, 60, 10 ether, 0), ZERO_BYTES);
-        modifyLiquidityRouter.modifyLiquidity(
-            key, IPoolManager.ModifyLiquidityParams(-120, 120, 10 ether, 0), ZERO_BYTES
-        );
         modifyLiquidityRouter.modifyLiquidity(
             key,
-            IPoolManager.ModifyLiquidityParams(TickMath.minUsableTick(60), TickMath.maxUsableTick(60), 10 ether, 0),
-            ZERO_BYTES
+            IPoolManager.ModifyLiquidityParams(-60, 60, 10 ether, 0),
+            abi.encode(bob)
+        );
+
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams(-120, 120, 10 ether, 0),
+            abi.encode(alice)
+        );
+
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams(
+                TickMath.minUsableTick(60),
+                TickMath.maxUsableTick(60),
+                3 ether,
+                0
+            ),
+            abi.encode(dylan)
         );
     }
 
-    function testStakingDonateHooks() public {
-        // positions were created in setup()
-        // assertEq(stakingDonate.beforeAddLiquidityCount(poolId), 3);
-        // assertEq(stakingDonate.beforeRemoveLiquidityCount(poolId), 0);
-
-        // assertEq(stakingDonate.beforeSwapCount(poolId), 0);
-        // assertEq(stakingDonate.afterSwapCount(poolId), 0);
-
+    function testLiquidityHooksEarn() public {
         // Perform a test swap //
         bool zeroForOne = true;
         int256 amountSpecified = -1e18; // negative number indicates exact input swap!
-        BalanceDelta swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
+        BalanceDelta swapDelta = swap(
+            key,
+            zeroForOne,
+            amountSpecified,
+            ZERO_BYTES
+        );
         // ------------------- //
 
         assertEq(int256(swapDelta.amount0()), amountSpecified);
 
-        assertEq(stakingDonate.beforeSwapCount(poolId), 1);
-        assertEq(stakingDonate.afterSwapCount(poolId), 1);
+        //uint256 amount = stakingHook.earned(poolId, address(this));
+        //assertEq(amount, 0);
+
+        vm.warp(block.timestamp + 1 days);
+
+        // after 1 days the user will get some rewards
+        // amount = stakingHook.earned(poolId, bob);
+        // assertGt(amount, 0);
     }
 
-    function testLiquidityHooks() public {
-        // positions were created in setup()
-        assertEq(stakingDonate.beforeAddLiquidityCount(poolId), 3);
-        assertEq(stakingDonate.beforeRemoveLiquidityCount(poolId), 0);
-
-        // remove liquidity
-        int256 liquidityDelta = -1e18;
-        modifyLiquidityRouter.modifyLiquidity(
-            key, IPoolManager.ModifyLiquidityParams(-60, 60, liquidityDelta, 0), ZERO_BYTES
-        );
-
-        assertEq(stakingDonate.beforeAddLiquidityCount(poolId), 3);
-        assertEq(stakingDonate.beforeRemoveLiquidityCount(poolId), 1);
-    }
 }
