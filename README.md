@@ -17,6 +17,8 @@ The process can be gas-intensive, adding another layer of cost and complexity.
 Uniswap v4 introduces hooks, which Stake-Hooks leverages to simplify implementations and user participation in liquidity incentives and mining.
 By offering various incentive structures directly through hooks, Stake-Hooks aims to lower the barrier to entry and make the process more accessible for users.
 
+![hooks](hooks.jpg "Different solutions").
+
 #### Improvements
 This project simplify the creation of liquidity incentives / liquidity minning opportunities
 It breaks down user-related issues into separate cases for better adaptability and optimisation.
