@@ -92,7 +92,7 @@ abstract contract ERC6909 is IERC6909Claims {
         address receiver,
         uint256 id,
         uint256 amount
-    ) public virtual returns (bool) {}
+    ) internal virtual returns (bool) {}
 
     function approve(
         address spender,

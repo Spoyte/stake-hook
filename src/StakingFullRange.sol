@@ -219,7 +219,13 @@ contract StakingFullRange is BaseHook, IUnlockCallback, ERC6909 {
             );
         }
 
+        _updateReward(poolId, params.to);
+
         _mint(params.to, uint256(PoolId.unwrap(poolId)), liquidity);
+
+        StakingInfo storage stakingPoolInfo = StakingInfos[poolId];
+        stakingPoolInfo.balanceOf[params.to] += liquidity;
+        stakingPoolInfo.totalSupply += liquidity;
 
         if (
             uint128(-addedDelta.amount0()) < params.amount0Min ||
@@ -256,7 +262,13 @@ contract StakingFullRange is BaseHook, IUnlockCallback, ERC6909 {
             })
         );
 
+        _updateReward(poolId, msg.sender);
+
         _burn(msg.sender, uint256(PoolId.unwrap(poolId)), params.liquidity);
+
+        StakingInfo storage stakingPoolInfo = StakingInfos[poolId];
+        stakingPoolInfo.balanceOf[msg.sender] -= params.liquidity;
+        stakingPoolInfo.totalSupply -= params.liquidity;
     }
 
     function beforeInitialize(
@@ -459,5 +471,99 @@ contract StakingFullRange is BaseHook, IUnlockCallback, ERC6909 {
         );
 
         poolManager.donate(key, donateAmount0, donateAmount1, ZERO_BYTES);
+    }
+
+    function _beforeTransfer(
+        address sender,
+        address receiver,
+        uint256 id,
+        uint256 amount
+    ) internal override returns (bool) {
+        // update reward of sender & receiver on transfer
+        PoolId poolId = PoolId.wrap(bytes32(id));
+        _updateReward(poolId, sender);
+        _updateReward(poolId, receiver);
+
+        StakingInfo storage stakingPoolInfo = StakingInfos[poolId];
+        stakingPoolInfo.balanceOf[sender] -= amount;
+        stakingPoolInfo.balanceOf[receiver] += amount;
+    }
+
+    function lastTimeRewardApplicable(
+        PoolId _poolId
+    ) public view returns (uint256) {
+        StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
+        return _min(stakingPoolInfo.finishAt, block.timestamp);
+    }
+
+    function rewardPerToken(PoolId _poolId) public view returns (uint256) {
+        StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
+        if (stakingPoolInfo.totalSupply == 0) {
+            return stakingPoolInfo.rewardPerTokenStored;
+        }
+
+        return
+            stakingPoolInfo.rewardPerTokenStored +
+            (stakingPoolInfo.rewardRate *
+                (lastTimeRewardApplicable(_poolId) -
+                    stakingPoolInfo.updatedAt) *
+                1e18) /
+            stakingPoolInfo.totalSupply;
+    }
+
+    function earned(
+        PoolId _poolId,
+        address _account
+    ) public view returns (uint256) {
+        StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
+        return
+            ((stakingPoolInfo.balanceOf[_account] *
+                (rewardPerToken(_poolId) -
+                    stakingPoolInfo.userRewardPerTokenPaid[_account])) / 1e18) +
+            stakingPoolInfo.rewards[_account];
+    }
+
+    function getReward(PoolId _poolId) external {
+        _updateReward(_poolId, msg.sender);
+        StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
+        uint256 reward = stakingPoolInfo.rewards[msg.sender];
+        if (reward > 0) {
+            stakingPoolInfo.rewards[msg.sender] = 0;
+            IERC20Minimal(stakingPoolInfo.rewardToken).transfer(
+                msg.sender,
+                reward
+            );
+        }
+    }
+
+    function getTotalSupply(PoolId _poolId) public view returns (uint256) {
+        return StakingInfos[_poolId].totalSupply;
+    }
+
+    function getLiquidity(
+        PoolId _poolId,
+        address _account
+    ) public view returns (uint256) {
+        return StakingInfos[_poolId].balanceOf[_account];
+    }
+
+    function getRewardToken(PoolId _poolId) public view returns (address) {
+        return StakingInfos[_poolId].rewardToken;
+    }
+
+    function _min(uint256 x, uint256 y) private pure returns (uint256) {
+        return x <= y ? x : y;
+    }
+
+    function _updateReward(PoolId _poolId, address _account) private {
+        StakingInfo storage stakingPoolInfo = StakingInfos[_poolId];
+        stakingPoolInfo.rewardPerTokenStored = rewardPerToken(_poolId);
+        stakingPoolInfo.updatedAt = lastTimeRewardApplicable(_poolId);
+
+        if (_account != address(0)) {
+            stakingPoolInfo.rewards[_account] = earned(_poolId, _account);
+            stakingPoolInfo.userRewardPerTokenPaid[_account] = stakingPoolInfo
+                .rewardPerTokenStored;
+        }
     }
 }
