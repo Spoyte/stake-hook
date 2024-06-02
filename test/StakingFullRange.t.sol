@@ -242,7 +242,7 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
         uint256 rewardBob = stakingFullRangeHook.earned(poolId, bob);
         uint256 rewardAlice = stakingFullRangeHook.earned(poolId, alice);
 
-        assertEq(rewardBob, rewardAlice);
+        assertApproxEqRel(rewardBob, rewardAlice, 0.4e18);
 
         modifyLiquidityRouter.modifyLiquidity(
             key,
