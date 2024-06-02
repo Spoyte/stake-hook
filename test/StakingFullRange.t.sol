@@ -294,4 +294,28 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
         // bob didn't receive more token after the first claim
         assertEq(balanceNew, balance);
     }
+
+    function testUserTransferLiquidity() public {
+        uint256 tokenId = uint256(PoolId.unwrap(poolId));
+
+        uint256 liquidityAlice = stakingFullRangeHook.balanceOf(alice, tokenId);
+        uint256 liquidityDylan = stakingFullRangeHook.balanceOf(dylan, tokenId);
+
+        uint256 amountTransfer = 1 ether;
+        vm.startPrank(alice);
+        stakingFullRangeHook.transfer(dylan, tokenId, amountTransfer);
+
+        uint256 newliquidityAlice = stakingFullRangeHook.balanceOf(
+            alice,
+            tokenId
+        );
+        uint256 newliquidityDylan = stakingFullRangeHook.balanceOf(
+            dylan,
+            tokenId
+        );
+
+        // we test the liquidity is effectived transfered
+        assertEq(liquidityAlice - amountTransfer, newliquidityAlice);
+        assertEq(liquidityDylan + amountTransfer, newliquidityDylan);
+    }
 }
