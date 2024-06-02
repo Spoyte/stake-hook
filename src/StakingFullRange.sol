@@ -22,14 +22,14 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {CurrencySettleTake} from "v4-core/src/libraries/CurrencySettleTake.sol";
 import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
 import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
-import {UniswapV4ERC20} from "v4-periphery/libraries/UniswapV4ERC20.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {IERC20Metadata} from "@openzeppelin/contracts/interfaces/IERC20Metadata.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
+import {ERC6909} from "./ERC6909.sol";
 
-contract StakingFullRange is BaseHook, IUnlockCallback {
+contract StakingFullRange is BaseHook, IUnlockCallback, ERC6909 {
     using CurrencyLibrary for Currency;
     using CurrencySettleTake for Currency;
     using PoolIdLibrary for PoolKey;
@@ -61,10 +61,30 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
         IPoolManager.ModifyLiquidityParams params;
     }
 
-    struct PoolInfo {
-        bool hasAccruedFees;
-        address liquidityToken;
+    struct StakingInfo {
+        // token used to reward the staker
+        address rewardToken;
+        // Duration of rewards to be paid out (in seconds)
+        uint256 duration;
+        // Timestamp of when the rewards finish
+        uint256 finishAt;
+        // Minimum of last updated time and reward finish time
+        uint256 updatedAt;
+        // Reward to be paid out per second
+        uint256 rewardRate;
+        // Sum of (reward rate * dt * 1e18 / total supply)
+        uint256 rewardPerTokenStored;
+        // User address => rewardPerTokenStored
+        mapping(address => uint256) userRewardPerTokenPaid;
+        // User address => rewards to be claimed
+        mapping(address => uint256) rewards;
+        // Total staked
+        uint256 totalSupply;
+        // User address => staked amount
+        mapping(address => uint256) balanceOf;
     }
+
+    mapping(PoolId => StakingInfo) public StakingInfos;
 
     struct AddLiquidityParams {
         Currency currency0;
@@ -86,7 +106,7 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
         uint256 deadline;
     }
 
-    mapping(PoolId => PoolInfo) public poolInfo;
+    mapping(PoolId => bool) public poolInfo;
 
     constructor(IPoolManager _poolManager) BaseHook(_poolManager) {}
 
@@ -104,7 +124,7 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
         return
             Hooks.Permissions({
                 beforeInitialize: true,
-                afterInitialize: false,
+                afterInitialize: true,
                 beforeAddLiquidity: true,
                 beforeRemoveLiquidity: false,
                 afterAddLiquidity: false,
@@ -118,6 +138,33 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
                 afterAddLiquidityReturnDelta: false,
                 afterRemoveLiquidityReturnDelta: false
             });
+    }
+
+    function afterInitialize(
+        address sender,
+        PoolKey calldata key,
+        uint160,
+        int24,
+        bytes calldata data
+    ) external override returns (bytes4) {
+        (address _rewardToken, uint256 _amount, uint32 _duration) = abi.decode(
+            data,
+            (address, uint256, uint32)
+        );
+        require(_rewardToken != address(0), "No reward token defined");
+        require(_amount > 0, "No reward token amount defined");
+        StakingInfo storage stakingPoolInfo = StakingInfos[key.toId()];
+        IERC20Minimal(_rewardToken).transferFrom(
+            sender,
+            address(this),
+            _amount
+        );
+        stakingPoolInfo.rewardToken = _rewardToken;
+        stakingPoolInfo.duration = _duration;
+        stakingPoolInfo.finishAt = block.timestamp + _duration;
+        stakingPoolInfo.rewardRate = _amount / _duration;
+
+        return BaseHook.afterInitialize.selector;
     }
 
     function addLiquidity(
@@ -137,7 +184,7 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
 
         if (sqrtPriceX96 == 0) revert PoolNotInitialized();
 
-        PoolInfo storage pool = poolInfo[poolId];
+        bool pool = poolInfo[poolId];
 
         uint128 poolLiquidity = poolManager.getLiquidity(poolId);
 
@@ -165,13 +212,14 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
         if (poolLiquidity == 0) {
             // permanently lock the first MINIMUM_LIQUIDITY tokens
             liquidity -= MINIMUM_LIQUIDITY;
-            UniswapV4ERC20(pool.liquidityToken).mint(
+            _mint(
                 address(0),
+                uint256(PoolId.unwrap(poolId)),
                 MINIMUM_LIQUIDITY
             );
         }
 
-        UniswapV4ERC20(pool.liquidityToken).mint(params.to, liquidity);
+        _mint(params.to, uint256(PoolId.unwrap(poolId)), liquidity);
 
         if (
             uint128(-addedDelta.amount0()) < params.amount0Min ||
@@ -198,8 +246,6 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
 
         if (sqrtPriceX96 == 0) revert PoolNotInitialized();
 
-        UniswapV4ERC20 erc20 = UniswapV4ERC20(poolInfo[poolId].liquidityToken);
-
         delta = modifyLiquidity(
             key,
             IPoolManager.ModifyLiquidityParams({
@@ -210,7 +256,7 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
             })
         );
 
-        erc20.burn(msg.sender, params.liquidity);
+        _burn(msg.sender, uint256(PoolId.unwrap(poolId)), params.liquidity);
     }
 
     function beforeInitialize(
@@ -223,25 +269,7 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
 
         PoolId poolId = key.toId();
 
-        string memory tokenSymbol = string(
-            abi.encodePacked(
-                "UniV4",
-                "-",
-                IERC20Metadata(Currency.unwrap(key.currency0)).symbol(),
-                "-",
-                IERC20Metadata(Currency.unwrap(key.currency1)).symbol(),
-                "-",
-                Strings.toString(uint256(key.fee))
-            )
-        );
-        address poolToken = address(
-            new UniswapV4ERC20(tokenSymbol, tokenSymbol)
-        );
-
-        poolInfo[poolId] = PoolInfo({
-            hasAccruedFees: false,
-            liquidityToken: poolToken
-        });
+        poolInfo[poolId] = false;
 
         return StakingFullRange.beforeInitialize.selector;
     }
@@ -265,9 +293,8 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
     ) external override returns (bytes4, BeforeSwapDelta, uint24) {
         PoolId poolId = key.toId();
 
-        if (!poolInfo[poolId].hasAccruedFees) {
-            PoolInfo storage pool = poolInfo[poolId];
-            pool.hasAccruedFees = true;
+        if (!poolInfo[poolId]) {
+            poolInfo[poolId] = true;
         }
 
         return (
@@ -330,21 +357,20 @@ contract StakingFullRange is BaseHook, IUnlockCallback {
         IPoolManager.ModifyLiquidityParams memory params
     ) internal returns (BalanceDelta delta) {
         PoolId poolId = key.toId();
-        PoolInfo storage pool = poolInfo[poolId];
 
-        if (pool.hasAccruedFees) {
+        if (poolInfo[poolId]) {
             _rebalance(key);
         }
 
         uint256 liquidityToRemove = FullMath.mulDiv(
             uint256(-params.liquidityDelta),
             poolManager.getLiquidity(poolId),
-            UniswapV4ERC20(pool.liquidityToken).totalSupply()
+            totalSupply[uint256(PoolId.unwrap(poolId))]
         );
 
         params.liquidityDelta = -(liquidityToRemove.toInt256());
         (delta, ) = poolManager.modifyLiquidity(key, params, ZERO_BYTES);
-        pool.hasAccruedFees = false;
+        poolInfo[poolId] = false;
     }
 
     function unlockCallback(
