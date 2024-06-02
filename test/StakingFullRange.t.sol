@@ -219,7 +219,6 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
         uint256 liquidity = stakingFullRangeHook.getLiquidity(poolId, alice);
         assertGt(liquidity, 0);
 
-        vm.startPrank(alice);
         StakingFullRange.RemoveLiquidityParams
             memory removeLiquidityParams = StakingFullRange
                 .RemoveLiquidityParams(
@@ -229,9 +228,17 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
                     60 ether,
                     MAX_DEADLINE
                 );
+        vm.startPrank(alice);
+        stakingFullRangeHook.removeLiquidity(removeLiquidityParams);
 
         uint256 newliquidity = stakingFullRangeHook.getLiquidity(poolId, alice);
         assertLt(newliquidity, liquidity);
+        uint256 tokenLiquidity = stakingFullRangeHook.balanceOf(
+            alice,
+            uint256(PoolId.unwrap(poolId))
+        );
+        // tokenliquidity equal liquidity owned by the user
+        assertEq(tokenLiquidity, newliquidity);
         console.log("lq %s new lq %s", liquidity, newliquidity);
     }
 
@@ -244,18 +251,24 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
 
         assertApproxEqRel(rewardBob, rewardAlice, 0.4e18);
 
-        modifyLiquidityRouter.modifyLiquidity(
-            key,
-            IPoolManager.ModifyLiquidityParams(-120, 120, -1 ether, 0),
-            abi.encode(alice)
-        );
+        StakingFullRange.RemoveLiquidityParams
+            memory removeLiquidityParams = StakingFullRange
+                .RemoveLiquidityParams(
+                    currency0,
+                    currency1,
+                    3000,
+                    10 ether,
+                    MAX_DEADLINE
+                );
+        vm.startPrank(bob);
+        stakingFullRangeHook.removeLiquidity(removeLiquidityParams);
 
-        // after alice remove some liquidity she wins less rewards than bob
+        // after bob remove some liquidity she wins less rewards than alice
         vm.warp(block.timestamp + 1 days);
 
         rewardBob = stakingFullRangeHook.earned(poolId, bob);
         rewardAlice = stakingFullRangeHook.earned(poolId, alice);
-        assertGt(rewardBob, rewardAlice);
+        assertGt(rewardAlice, rewardBob);
     }
 
     function testUserGetStake() public {
