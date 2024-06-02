@@ -5,14 +5,21 @@ import {BaseHook} from "v4-periphery/BaseHook.sol";
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Pool} from "v4-core/src/libraries/Pool.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {Position} from "v4-core/src/libraries/Position.sol";
+import {FixedPoint128} from "v4-core/src/libraries/FixedPoint128.sol";
 
 contract Staking is BaseHook {
     using PoolIdLibrary for PoolKey;
+    using Pool for Pool.State;
 
     // NOTE: ---------------------------------------------------------
     // state variables should typically be unique to a pool
@@ -110,5 +117,49 @@ contract Staking is BaseHook {
         bytes calldata
     ) external override returns (bytes4) {
         return BaseHook.beforeRemoveLiquidity.selector;
+    }
+
+    function afterRemoveLiquidity(
+        address,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata liquidityParams,
+        BalanceDelta delta,
+        bytes calldata
+    ) external override returns (bytes4, BalanceDelta) {
+        (
+            uint256 feeGrowthInside0X128,
+            uint256 feeGrowthInside1X128
+        ) = StateLibrary.getFeeGrowthInside(
+                poolManager,
+                key.toId(),
+                liquidityParams.tickLower,
+                liquidityParams.tickUpper
+            );
+
+        Position.Info memory positionInfo = StateLibrary.getPosition(
+            poolManager,
+            key.toId(),
+            tx.origin,
+            liquidityParams.tickLower,
+            liquidityParams.tickUpper,
+            liquidityParams.salt
+        );
+
+        //calculate like feeOwed in position contract
+        uint256 feesOwed0 = FullMath.mulDiv(
+            feeGrowthInside0X128 - positionInfo.feeGrowthInside0LastX128,
+            positionInfo.liquidity,
+            FixedPoint128.Q128
+        );
+        uint256 feesOwed1 = FullMath.mulDiv(
+            feeGrowthInside1X128 - positionInfo.feeGrowthInside1LastX128,
+            positionInfo.liquidity,
+            FixedPoint128.Q128
+        );
+
+        // Position.Info storage position = self.positions.get(params.owner, tickLower, tickUpper, params.salt);
+        // (uint256 feesOwed0, uint256 feesOwed1) =
+        //     position.update(liquidityDelta, feeGrowthInside0X128, feeGrowthInside1X128);
+        return (BaseHook.afterRemoveLiquidity.selector, delta);
     }
 }
