@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, console} from "forge-std/Test.sol";
 import {GasSnapshot} from "forge-gas-snapshot/GasSnapshot.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {StakingFullRange} from "../src/StakingFullRange.sol";
@@ -20,6 +20,7 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
 import {HookMiner} from "./utils/HookMiner.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 
@@ -92,8 +93,7 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
     function setUp() public {
         // creates the pool manager, utility routers, and test tokens
         Deployers.deployFreshManagerAndRouters();
-        (Currency currency0, Currency currency1) = Deployers
-            .deployMintAndApprove2Currencies();
+        Deployers.deployMintAndApprove2Currencies();
 
         // Deploy the hook to an address with the correct flags
 
@@ -133,8 +133,8 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
         );
         manager.initialize(key, SQRT_PRICE_1_1, dataInit);
 
-        MockERC20 token0 = MockERC20(Currency.unwrap(currency0));
-        MockERC20 token1 = MockERC20(Currency.unwrap(currency1));
+        IERC20Minimal token0 = IERC20Minimal(Currency.unwrap(currency0));
+        IERC20Minimal token1 = IERC20Minimal(Currency.unwrap(currency1));
 
         token0.approve(address(stakingFullRangeHook), type(uint256).max);
         token1.approve(address(stakingFullRangeHook), type(uint256).max);
@@ -148,7 +148,35 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
                 100 ether,
                 99 ether,
                 99 ether,
-                address(this),
+                bob,
+                MAX_DEADLINE
+            )
+        );
+
+        stakingFullRangeHook.addLiquidity(
+            StakingFullRange.AddLiquidityParams(
+                currency0,
+                currency1,
+                3000,
+                100 ether,
+                100 ether,
+                99 ether,
+                99 ether,
+                alice,
+                MAX_DEADLINE
+            )
+        );
+
+        stakingFullRangeHook.addLiquidity(
+            StakingFullRange.AddLiquidityParams(
+                currency0,
+                currency1,
+                3000,
+                30 ether,
+                30 ether,
+                29 ether,
+                29 ether,
+                dylan,
                 MAX_DEADLINE
             )
         );
@@ -166,8 +194,19 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
         );
         // ------------------- //
 
-        /* assertEq(int256(swapDelta.amount0()), amountSpecified);
+        assertEq(int256(swapDelta.amount0()), amountSpecified);
 
+        uint256 amount = stakingFullRangeHook.earned(poolId, bob);
+        assertEq(amount, 0);
+
+        vm.warp(block.timestamp + 1 days);
+
+        // after 1 days the user will get some rewards
+        amount = stakingFullRangeHook.earned(poolId, bob);
+        assertGt(amount, 0);
+    }
+
+    function testUserRemoveLiquidity() public {
         uint256 amount = stakingFullRangeHook.earned(poolId, address(this));
         assertEq(amount, 0);
 
@@ -175,6 +214,71 @@ contract TestFullRange is Test, Deployers, GasSnapshot {
 
         // after 1 days the user will get some rewards
         amount = stakingFullRangeHook.earned(poolId, bob);
-        assertGt(amount, 0);*/
+        assertGt(amount, 0);
+
+        uint256 liquidity = stakingFullRangeHook.getLiquidity(poolId, alice);
+        assertGt(liquidity, 0);
+
+        vm.startPrank(alice);
+        StakingFullRange.RemoveLiquidityParams
+            memory removeLiquidityParams = StakingFullRange
+                .RemoveLiquidityParams(
+                    currency0,
+                    currency1,
+                    3000,
+                    60 ether,
+                    MAX_DEADLINE
+                );
+
+        uint256 newliquidity = stakingFullRangeHook.getLiquidity(poolId, alice);
+        assertLt(newliquidity, liquidity);
+        console.log("lq %s new lq %s", liquidity, newliquidity);
+    }
+
+    function testUserWinSameAmount() public {
+        vm.warp(block.timestamp + 1 days);
+
+        // after 1 days the user will get same rewards if they are same liquidity
+        uint256 rewardBob = stakingFullRangeHook.earned(poolId, bob);
+        uint256 rewardAlice = stakingFullRangeHook.earned(poolId, alice);
+
+        assertEq(rewardBob, rewardAlice);
+
+        modifyLiquidityRouter.modifyLiquidity(
+            key,
+            IPoolManager.ModifyLiquidityParams(-120, 120, -1 ether, 0),
+            abi.encode(alice)
+        );
+
+        // after alice remove some liquidity she wins less rewards than bob
+        vm.warp(block.timestamp + 1 days);
+
+        rewardBob = stakingFullRangeHook.earned(poolId, bob);
+        rewardAlice = stakingFullRangeHook.earned(poolId, alice);
+        assertGt(rewardBob, rewardAlice);
+    }
+
+    function testUserGetStake() public {
+        vm.warp(block.timestamp + 31 days);
+
+        uint256 rewardBob = stakingFullRangeHook.earned(poolId, bob);
+        address token = stakingFullRangeHook.getRewardToken(poolId);
+        uint256 balance = IERC20Minimal(token).balanceOf(bob);
+        // bob didn't receive rewards
+        assertEq(balance, 0);
+
+        vm.prank(bob);
+        stakingFullRangeHook.getReward(poolId);
+
+        // bob received all his rewards
+        balance = IERC20Minimal(token).balanceOf(bob);
+        console.log("reward %s balance %s", rewardBob, balance);
+        assertEq(rewardBob, balance);
+
+        vm.prank(bob);
+        stakingFullRangeHook.getReward(poolId);
+        uint256 balanceNew = IERC20Minimal(token).balanceOf(bob);
+        // bob didn't receive more token after the first claim
+        assertEq(balanceNew, balance);
     }
 }
